@@ -1,16 +1,1 @@
-[
-  {
-    "esercizio": "Panca Piana",
-    "peso": 40,
-    "ripetizioni": 10,
-    "serie": 3,
-    "giorno": "Lun"
-  },
-  {
-    "esercizio": "Squat",
-    "peso": 60,
-    "ripetizioni": 8,
-    "serie": 3,
-    "giorno": "Mer"
-  }
-]
+[]
