@@ -1,4 +1,4 @@
-# app.py — Workout Tracker PRO (Dark Purple Gradient) — Full feature set (no login)
+# app.py — Workout Tracker PRO (Dark Purple Gradient) — full features
 import streamlit as st
 import json
 import os
@@ -8,6 +8,7 @@ from collections import defaultdict
 import pandas as pd
 import plotly.express as px
 from typing import List, Dict, Any
+import html
 
 # -------------------------
 # Page + CSS (Dark Purple Gradient + animations + avatars)
@@ -74,6 +75,10 @@ st.markdown(
     .accent-pill { background: linear-gradient(90deg,#9b4dff,#6fc3ff); padding:6px 10px; border-radius:999px; color:white; font-weight:600; }
     .muscle-icon { width:28px; height:28px; vertical-align: middle; margin-right:6px; }
 
+    /* animated motivational area */
+    .motiv-container { padding:8px 12px; border-radius:999px; display:inline-block; }
+    .motiv-text { font-weight:700; color:#fff; }
+
     /* responsive minor fixes */
     @media (max-width: 600px) {
         .avatar { width:64px; height:64px; font-size:18px; }
@@ -103,11 +108,18 @@ def athlete_workouts_file(a: str) -> str:
 def athlete_history_file(a: str) -> str:
     return os.path.join(DATA_DIR, f"{a.lower()}_history.json")
 
+def athlete_plan_file(a: str) -> str:
+    return os.path.join(DATA_DIR, f"{a.lower()}_plan.txt")
+
 def ensure_files(a: str):
     for p in (athlete_workouts_file(a), athlete_history_file(a)):
         if not os.path.exists(p):
             with open(p, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
+    # plan file optional (txt)
+    if not os.path.exists(athlete_plan_file(a)):
+        with open(athlete_plan_file(a), "w", encoding="utf-8") as f:
+            f.write("")
 
 def load_workouts(a: str) -> List[Dict[str, Any]]:
     ensure_files(a)
@@ -133,6 +145,19 @@ def save_history(a: str, data: List[Dict[str,Any]]):
     with open(athlete_history_file(a), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def load_plan(a: str) -> str:
+    p = athlete_plan_file(a)
+    if not os.path.exists(p):
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("")
+        return ""
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()
+
+def save_plan(a: str, text: str):
+    with open(athlete_plan_file(a), "w", encoding="utf-8") as f:
+        f.write(text)
+
 # -------------------------
 # Preloaded exercises (with 'bodybuilding' icons as inline SVG)
 # -------------------------
@@ -146,7 +171,6 @@ PRELOADED = {
     "Core": ["Crunch", "Plank", "Russian twist"]
 }
 
-# small inline SVG icons (stylized, bodybuilding-ish)
 SVG_ICONS = {
     "Petto": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M3 12c0-3.314 2.686-6 6-6 1.657 0 3 1.343 3 3 0-1.657 1.343-3 3-3 3.314 0 6 2.686 6 6v6H3v-6z' stroke='#ffccd9' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
     "Dorso": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M12 2v4m0 12v4M4 8c4 4 8 4 16 0' stroke='#ffd9b3' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
@@ -158,32 +182,88 @@ SVG_ICONS = {
 }
 
 # -------------------------
-# Athlete selector (avatars with dynamic accent)
+# Session init
 # -------------------------
 if "athlete" not in st.session_state:
     st.session_state.athlete = ATHLETES[0]
+if "motiv_index" not in st.session_state:
+    st.session_state.motiv_index = 0
+if "show_plan_editor" not in st.session_state:
+    st.session_state.show_plan_editor = False
 
-st.sidebar.markdown("### 👤 Seleziona atleta")
-for a in ATHLETES:
-    selected_class = "avatar avatar-selected" if st.session_state.athlete == a else "avatar"
-    # dynamic background color per athlete
-    bg_color = "#7c52ff" if a == "Simone" else "#4db8ff"
-    # render clickable avatar (button below used to set)
-    st.sidebar.markdown(f"<div style='text-align:center; margin-bottom:8px;'><div class='{selected_class}' style='background:{bg_color};'>{a[0]}</div></div>", unsafe_allow_html=True)
-    if st.sidebar.button(f"Seleziona {a}", key=f"btn_{a}"):
-        st.session_state.athlete = a
-        st.rerun()
+# -------------------------
+# Motivational carousel HTML (runs JS inside an iframe)
+# -------------------------
+MOTIVATIONS = [
+    "Spingi oggi, vinci domani.",
+    "Ogni rep ti avvicina al tuo obiettivo.",
+    "Fai ciò che altri non vogliono fare.",
+    "Tu costruisci la tua disciplina.",
+    "Non fermarti quando sei stanco, fermati quando hai finito."
+]
+
+def motivational_carousel_html(phrases: List[str], interval_ms: int = 5000):
+    # safe-escape phrases
+    esc = [html.escape(p) for p in phrases]
+    phrases_js = ",".join(f'"{p}"' for p in esc)
+    html_code = f"""
+    <div id='motiv' class='motiv-container card' style='display:inline-block;'>
+      <span id='motiv-text' class='motiv-text'></span>
+    </div>
+    <script>
+    const phrases = [{phrases_js}];
+    const interval = {interval_ms};
+    let idx = 0;
+    function showPhrase(i) {{
+      const el = parent.document.getElementById('motiv-text');
+      if(!el) return;
+      el.innerText = phrases[i % phrases.length];
+    }}
+    // initial
+    try {{
+      parent.document.getElementById('motiv-text').innerText = phrases[0];
+    }} catch(e) {{}}
+    // attempt to update via setInterval within this iframe by posting to parent
+    setInterval(function() {{
+      idx = (idx + 1) % phrases.length;
+      // try update in parent DOM (works in many Streamlit setups)
+      try {{
+        parent.document.getElementById('motiv-text').innerText = phrases[idx];
+      }} catch(e) {{}}
+    }}, interval);
+    </script>
+    """
+    return html_code
+
+# attempt to inject motivational area (works best via st.components.v1.html)
+from streamlit.components.v1 import html as st_html
+st_html(motivational_carousel_html(MOTIVATIONS, interval_ms=6000), height=60)
+
+# -------------------------
+# Athlete selector (avatars) in main area
+# -------------------------
+st.write("## 👤 Atleti")
+c1, c2 = st.columns(2)
+for col, name in zip((c1, c2), ATHLETES):
+    selected = (st.session_state.athlete == name)
+    bg = "#7c52ff" if name == "Simone" else "#4db8ff"
+    cls = "avatar avatar-selected" if selected else "avatar"
+    with col:
+        st.markdown(f"<div style='text-align:center;'><div class='{cls}' style='background:{bg};'>{name[0]}</div></div>", unsafe_allow_html=True)
+        if st.button(f"Seleziona {name}", key=f"sel_{name}"):
+            st.session_state.athlete = name
+            st.rerun()
 
 ath = st.session_state.athlete
 ensure_files(ath)
 
 # -------------------------
-# Top row: info / export / reset
+# Top controls: export/reset
 # -------------------------
-c1, c2, c3 = st.columns([3,2,2])
-with c1:
+col1, col2, col3 = st.columns([3,2,2])
+with col1:
     st.markdown(f"<div class='card'><b>{ath}</b> — <span class='small'>Ultimo salvataggio locale</span></div>", unsafe_allow_html=True)
-with c2:
+with col2:
     if st.button("📥 Esporta storico (CSV)"):
         hist = load_history(ath)
         if hist:
@@ -192,7 +272,7 @@ with c2:
             st.download_button("Download CSV", csv, file_name=f"{ath.lower()}_history.csv")
         else:
             st.info("Nessuno storico disponibile.")
-with c3:
+with col3:
     if st.button("🧹 Reset locale"):
         save_workouts(ath, [])
         save_history(ath, [])
@@ -210,7 +290,6 @@ def normalize(e: Dict[str,Any]) -> Dict[str,Any]:
     out["group"] = e.get("group", e.get("muscle", "Generale"))
     out["exercise"] = e.get("exercise", e.get("esercizio", "Unnamed"))
     out["day"] = e.get("day", e.get("giorno", "Lun"))
-    # normalise sets
     sets = e.get("sets") or e.get("serie") or e.get("series") or e.get("weights")
     if isinstance(sets, list):
         s = []
@@ -234,7 +313,6 @@ def normalize(e: Dict[str,Any]) -> Dict[str,Any]:
 
 workouts_raw = load_workouts(ath)
 workouts = [normalize(e) for e in workouts_raw]
-# save normalized
 save_workouts(ath, workouts)
 
 # -------------------------
@@ -245,7 +323,6 @@ with st.expander("Aggiungi nuovo esercizio"):
     colA, colB, colC = st.columns([2,3,1])
     with colA:
         group = st.selectbox("Gruppo muscolare", list(PRELOADED.keys()))
-        # show icon
         icon_html = SVG_ICONS.get(group, "")
         st.markdown(f"<div style='margin-top:6px'>{icon_html} <span class='small'>{group}</span></div>", unsafe_allow_html=True)
     with colB:
@@ -306,19 +383,18 @@ if not filtered:
 else:
     for entry in filtered:
         st.markdown(f"<div class='exercise-card'><b style='font-size:15px'>{entry['exercise']}</b> <span class='small'> — {entry['group']} ({entry['day']})</span>", unsafe_allow_html=True)
-        # per-set editing
         sets = entry["sets"]
-        cols = st.columns([1,1,1,1,1])
+        # per-set editing controls (number inputs)
         for i, s in enumerate(sets):
-            colp, colr, colb = st.columns([2,1,1])
-            p = colp.number_input(f"Peso S{i+1} — {entry['exercise']}", min_value=0, max_value=1000, value=int(s.get("peso",0)), key=f"{entry['id']}_peso_{i}")
-            r = colr.number_input(f"Rep S{i+1}", min_value=0, max_value=200, value=int(s.get("reps",0)), key=f"{entry['id']}_rep_{i}")
-            # update local list
-            real_idx = next((ix for ix,w in enumerate(workouts) if w["id"]==entry["id"]), None)
-            if real_idx is not None:
-                workouts[real_idx]["sets"][i]["peso"] = int(p)
-                workouts[real_idx]["sets"][i]["reps"] = int(r)
-        # entry controls
+            cols = st.columns([2,1,1,1])
+            cols[0].markdown(f"**Serie {i+1}**")
+            p = cols[1].number_input(f"peso_{entry['id']}_{i}", min_value=0, max_value=1000, value=int(s.get("peso",0)), key=f"peso_{entry['id']}_{i}")
+            r = cols[2].number_input(f"rep_{entry['id']}_{i}", min_value=0, max_value=200, value=int(s.get("reps",0)), key=f"rep_{entry['id']}_{i}")
+            # update in workouts by id
+            idx = next((ix for ix,w in enumerate(workouts) if w["id"]==entry["id"]), None)
+            if idx is not None:
+                workouts[idx]["sets"][i]["peso"] = int(p)
+                workouts[idx]["sets"][i]["reps"] = int(r)
         b1, b2 = st.columns([1,1])
         if b1.button("💾 Salva entry", key=f"save_{entry['id']}"):
             save_workouts(ath, workouts)
@@ -332,10 +408,32 @@ else:
 st.markdown("---")
 
 # -------------------------
-# Register session to history (log)
+# Scheda palestra (hidden editor toggled by button)
+# -------------------------
+st.subheader("📒 Scheda palestra (opzionale)")
+if st.button("🔽 Mostra / Nascondi scheda"):
+    st.session_state.show_plan_editor = not st.session_state.show_plan_editor
+
+if st.session_state.get("show_plan_editor", False):
+    plan_text = load_plan(ath)
+    txt = st.text_area("Modifica la tua scheda (Markdown / testo). Salva quando hai finito.", value=plan_text, height=220)
+    colp, colq = st.columns([1,1])
+    with colp:
+        if st.button("💾 Salva scheda"):
+            save_plan(ath, txt)
+            st.success("Scheda salvata")
+    with colq:
+        if st.button("📄 Esporta scheda (TXT)"):
+            st.download_button("Download TXT", txt.encode("utf-8"), file_name=f"{ath.lower()}_plan.txt")
+
+st.markdown("---")
+
+# -------------------------
+# Register session to history (log) + note sessione
 # -------------------------
 st.subheader("📥 Registra sessione")
-note = st.text_input("Nota sessione (opzionale)")
+st.write("Aggiungi una nota (es. sensazioni, RPE, durata). Verrà salvata insieme ai record di ogni serie.")
+note = st.text_input("Nota sessione (opzionale)", value="")
 if st.button("Registra sessione nello storico"):
     hist = load_history(ath)
     now = datetime.now().isoformat()
