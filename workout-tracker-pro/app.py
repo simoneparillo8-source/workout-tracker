@@ -1,222 +1,390 @@
+# app.py — Workout Tracker PRO (Dark Purple Gradient) — Full feature set (no login)
 import streamlit as st
 import json
 import os
+import uuid
 from datetime import datetime
-import random
+from collections import defaultdict
+import pandas as pd
+import plotly.express as px
+from typing import List, Dict, Any
 
-# ------------------------------------------------------------
-# CONFIGURAZIONE UI
-# ------------------------------------------------------------
-st.set_page_config(
-    page_title="Workout Tracker PRO",
-    page_icon="💪",
-    layout="wide"
+# -------------------------
+# Page + CSS (Dark Purple Gradient + animations + avatars)
+# -------------------------
+st.set_page_config(page_title="Workout Tracker PRO", page_icon="🏋️", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    :root{
+      --bg-start: #1a002b;
+      --bg-end: #061233;
+      --card: rgba(255,255,255,0.03);
+      --accent: #9b4dff;
+      --accent-2: #6fc3ff;
+      --muted: #9aa6b2;
+    }
+    .stApp {
+      background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
+      color: #eaf0ff;
+      font-family: Inter, sans-serif;
+    }
+    .header {
+      padding: 18px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      background: linear-gradient(90deg, rgba(27,6,47,0.6), rgba(6,16,42,0.6));
+      box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+    }
+    .title { font-size:20px; font-weight:700; color: #fff; }
+    .subtitle { color: var(--muted); font-size:13px; margin-top:6px; }
+
+    /* avatar */
+    .avatar {
+      width:86px; height:86px; border-radius:50%;
+      display:inline-flex; align-items:center; justify-content:center;
+      font-weight:700; color:white; cursor:pointer;
+      transition: transform .18s ease, box-shadow .18s ease;
+      border: 3px solid rgba(255,255,255,0.06);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .avatar:hover { transform:scale(1.05); }
+    .avatar-selected { box-shadow: 0 10px 28px rgba(155,77,255,0.28); border-color: rgba(155,77,255,0.9); transform:scale(1.06); }
+
+    /* cards */
+    .card {
+      background: var(--card);
+      padding:12px;
+      border-radius:12px;
+      border:1px solid rgba(155,77,255,0.08);
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+
+    .exercise-card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:12px;
+      padding:10px;
+      margin-bottom:10px;
+      border:1px solid rgba(255,255,255,0.03);
+    }
+
+    .small { font-size:12px; color:var(--muted); }
+    .accent-pill { background: linear-gradient(90deg,#9b4dff,#6fc3ff); padding:6px 10px; border-radius:999px; color:white; font-weight:600; }
+    .muscle-icon { width:28px; height:28px; vertical-align: middle; margin-right:6px; }
+
+    /* responsive minor fixes */
+    @media (max-width: 600px) {
+        .avatar { width:64px; height:64px; font-size:18px; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-# ------------------------------------------------------------
-# TEMA PERSONALIZZATO
-# ------------------------------------------------------------
-st.markdown("""
-<style>
-body {
-    background-color: #0d0d0d;
-    color: #e6e6e6;
-}
+st.markdown(
+    '<div class="header"><div class="title">🏋️ Workout Tracker PRO</div>'
+    '<div class="subtitle">Dark Purple Gradient — per-set editing, progress & weekly volume</div></div>',
+    unsafe_allow_html=True
+)
 
-/* Bottoni tondi atleta */
-.avatar-btn {
-    width: 90px;
-    height: 90px;
-    border-radius: 50%;
-    border: 3px solid #00eaff;
-    cursor: pointer;
-    margin-right: 20px;
-}
-
-.avatar-selected {
-    border-color: #9d00ff !important;
-    transform: scale(1.05);
-}
-
-/* Tabelle più moderne */
-thead tr th {
-    background-color: #1f1f1f !important;
-    color: white !important;
-}
-
-tbody tr td {
-    background-color: #141414 !important;
-}
-
-/* Titoli */
-h1, h2, h3 {
-    font-weight: 700;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ------------------------------------------------------------
-# FILES E SALVATAGGI
-# ------------------------------------------------------------
+# -------------------------
+# Data paths and helpers
+# -------------------------
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-USERS = ["Simone", "Antonio"]
+ATHLETES = ["Simone", "Antonio"]
 
+def athlete_workouts_file(a: str) -> str:
+    return os.path.join(DATA_DIR, f"{a.lower()}_workouts.json")
 
-def load_user_data(user):
-    path = f"{DATA_DIR}/{user.lower()}.json"
-    if not os.path.exists(path):
-        with open(path, "w") as f:
-            json.dump([], f)
-    with open(path, "r") as f:
-        return json.load(f)
+def athlete_history_file(a: str) -> str:
+    return os.path.join(DATA_DIR, f"{a.lower()}_history.json")
 
+def ensure_files(a: str):
+    for p in (athlete_workouts_file(a), athlete_history_file(a)):
+        if not os.path.exists(p):
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
 
-def save_user_data(user, data):
-    with open(f"{DATA_DIR}/{user.lower()}.json", "w") as f:
-        json.dump(data, f, indent=4)
+def load_workouts(a: str) -> List[Dict[str, Any]]:
+    ensure_files(a)
+    with open(athlete_workouts_file(a), "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return []
 
+def save_workouts(a: str, data: List[Dict[str,Any]]):
+    with open(athlete_workouts_file(a), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ------------------------------------------------------------
-# ESERCIZI PRECARICATI
-# ------------------------------------------------------------
-PRELOADED_EXERCISES = {
-    "Petto": ["Panca Piana", "Panca Inclinata", "Croci ai Cavi"],
-    "Schiena": ["Lat Machine", "Rematore", "Trazioni"],
-    "Spalle": ["Shoulder Press", "Alzate Laterali"],
-    "Bicipiti": ["Curl Bilanciere", "Curl Manubri"],
-    "Tricipiti": ["French Press", "Pushdown"],
-    "Gambe": ["Squat", "Leg Press", "Affondi", "Leg Extension"],
-    "Addome": ["Crunch", "Plank", "Russian Twist"]
+def load_history(a: str) -> List[Dict[str,Any]]:
+    ensure_files(a)
+    with open(athlete_history_file(a), "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return []
+
+def save_history(a: str, data: List[Dict[str,Any]]):
+    with open(athlete_history_file(a), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# -------------------------
+# Preloaded exercises (with 'bodybuilding' icons as inline SVG)
+# -------------------------
+PRELOADED = {
+    "Petto": ["Panca piana", "Panca inclinata", "Chest press", "Croci con manubri"],
+    "Dorso": ["Lat machine", "Rematore con bilanciere", "Pulldown", "Trazioni"],
+    "Spalle": ["Military press", "Alzate laterali", "Arnold press"],
+    "Bicipiti": ["Curl bilanciere", "Curl manubri", "Hammer curl"],
+    "Tricipiti": ["French press", "Pushdown", "Dip"],
+    "Gambe": ["Squat", "Leg press", "Affondi", "Leg curl", "Leg extension"],
+    "Core": ["Crunch", "Plank", "Russian twist"]
 }
 
-DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
+# small inline SVG icons (stylized, bodybuilding-ish)
+SVG_ICONS = {
+    "Petto": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M3 12c0-3.314 2.686-6 6-6 1.657 0 3 1.343 3 3 0-1.657 1.343-3 3-3 3.314 0 6 2.686 6 6v6H3v-6z' stroke='#ffccd9' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Dorso": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M12 2v4m0 12v4M4 8c4 4 8 4 16 0' stroke='#ffd9b3' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Spalle": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M12 3c2 0 3 1 4 3s2 3 4 3' stroke='#d9b3ff' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Bicipiti": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M4 20c2-4 6-6 10-6s8 2 10 6' stroke='#ffd1b3' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Tricipiti": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M3 12h18' stroke='#ffb3d9' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Gambe": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M6 3v18M18 3v18' stroke='#c6f0ff' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>",
+    "Core": "<svg class='muscle-icon' viewBox='0 0 24 24' fill='none'><path d='M12 2c3 0 6 4 6 10s-3 10-6 10-6-4-6-10 3-10 6-10z' stroke='#e6ffcc' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+}
 
-MOTIVATION = [
-    "Spingi oggi, vinci domani.",
-    "Ogni rep ti avvicina al tuo obiettivo.",
-    "Disciplina batte motivazione.",
-    "Non fermarti quando sei stanco, fermati quando hai finito.",
-    "La versione migliore di te stesso ti aspetta."
-]
+# -------------------------
+# Athlete selector (avatars with dynamic accent)
+# -------------------------
+if "athlete" not in st.session_state:
+    st.session_state.athlete = ATHLETES[0]
 
-# ------------------------------------------------------------
-# SCELTA ATLETA — AVATAR TONDI CLICCABILI
-# ------------------------------------------------------------
-colA, colB = st.columns([1, 8])
-with colA:
-    st.write("### Seleziona Atleta:")
-
-with colB:
-    c1, c2 = st.columns([1, 1])
-
-    # Avatar Simone
-    with c1:
-        simone_clicked = st.button("",
-            key="simone_btn",
-            help="Seleziona Simone"
-        )
-        st.markdown(
-            f"""
-            <div>
-                <img src="https://via.placeholder.com/90x90.png?text=S" 
-                class="avatar-btn {'avatar-selected' if st.session_state.get('user', 'Simone')=='Simone' else ''}">
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Avatar Antonio
-    with c2:
-        antonio_clicked = st.button("",
-            key="antonio_btn",
-            help="Seleziona Antonio"
-        )
-        st.markdown(
-            f"""
-            <div>
-                <img src="https://via.placeholder.com/90x90.png?text=A" 
-                class="avatar-btn {'avatar-selected' if st.session_state.get('user', 'Simone')=='Antonio' else ''}">
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-if simone_clicked:
-    st.session_state["user"] = "Simone"
-    st.rerun()
-
-if antonio_clicked:
-    st.session_state["user"] = "Antonio"
-    st.rerun()
-
-user = st.session_state.get("user", "Simone")
-
-# ------------------------------------------------------------
-# FRASE MOTIVAZIONALE
-# ------------------------------------------------------------
-st.markdown(f"### 💬 Motivazione del giorno: *{random.choice(MOTIVATION)}*")
-
-# ------------------------------------------------------------
-# CARICA DATI UTENTE
-# ------------------------------------------------------------
-data = load_user_data(user)
-
-st.write(f"## 💪 Workout Tracker — {user}")
-
-# ------------------------------------------------------------
-# FORM AGGIUNTA ESERCIZIO
-# ------------------------------------------------------------
-with st.expander("➕ Aggiungi esercizio"):
-    group = st.selectbox("Gruppo muscolare", list(PRELOADED_EXERCISES.keys()))
-    exercise = st.selectbox("Esercizio", PRELOADED_EXERCISES[group])
-    day = st.selectbox("Giorno", DAYS)
-    peso = st.slider("Peso (kg)", 0, 200, 30)
-    reps = st.number_input("Ripetizioni", 1, 50, 10)
-    series = st.number_input("Serie", 1, 10, 3)
-
-    if st.button("Aggiungi"):
-        data.append({
-            "group": group,
-            "exercise": exercise,
-            "day": day,
-            "peso": peso,
-            "reps": reps,
-            "series": series,
-            "timestamp": datetime.now().isoformat()
-        })
-        save_user_data(user, data)
-        st.success("Esercizio aggiunto!")
+st.sidebar.markdown("### 👤 Seleziona atleta")
+for a in ATHLETES:
+    selected_class = "avatar avatar-selected" if st.session_state.athlete == a else "avatar"
+    # dynamic background color per athlete
+    bg_color = "#7c52ff" if a == "Simone" else "#4db8ff"
+    # render clickable avatar (button below used to set)
+    st.sidebar.markdown(f"<div style='text-align:center; margin-bottom:8px;'><div class='{selected_class}' style='background:{bg_color};'>{a[0]}</div></div>", unsafe_allow_html=True)
+    if st.sidebar.button(f"Seleziona {a}", key=f"btn_{a}"):
+        st.session_state.athlete = a
         st.rerun()
 
-# ------------------------------------------------------------
-# MOSTRA TABELLA
-# ------------------------------------------------------------
-st.write("## 📋 I tuoi esercizi")
+ath = st.session_state.athlete
+ensure_files(ath)
 
-if len(data) == 0:
-    st.warning("Nessun esercizio registrato.")
+# -------------------------
+# Top row: info / export / reset
+# -------------------------
+c1, c2, c3 = st.columns([3,2,2])
+with c1:
+    st.markdown(f"<div class='card'><b>{ath}</b> — <span class='small'>Ultimo salvataggio locale</span></div>", unsafe_allow_html=True)
+with c2:
+    if st.button("📥 Esporta storico (CSV)"):
+        hist = load_history(ath)
+        if hist:
+            df = pd.DataFrame(hist)
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("Download CSV", csv, file_name=f"{ath.lower()}_history.csv")
+        else:
+            st.info("Nessuno storico disponibile.")
+with c3:
+    if st.button("🧹 Reset locale"):
+        save_workouts(ath, [])
+        save_history(ath, [])
+        st.success("Dati locali resettati.")
+        st.rerun()
+
+st.markdown("---")
+
+# -------------------------
+# Load & normalize workouts (handle legacy structures)
+# -------------------------
+def normalize(e: Dict[str,Any]) -> Dict[str,Any]:
+    out = {}
+    out["id"] = e.get("id", str(uuid.uuid4()))
+    out["group"] = e.get("group", e.get("muscle", "Generale"))
+    out["exercise"] = e.get("exercise", e.get("esercizio", "Unnamed"))
+    out["day"] = e.get("day", e.get("giorno", "Lun"))
+    # normalise sets
+    sets = e.get("sets") or e.get("serie") or e.get("series") or e.get("weights")
+    if isinstance(sets, list):
+        s = []
+        for item in sets:
+            if isinstance(item, dict):
+                s.append({"peso": int(item.get("peso",0)), "reps": int(item.get("reps",0))})
+            elif isinstance(item, (int,float)):
+                s.append({"peso": int(item), "reps": 0})
+            else:
+                s.append({"peso":0,"reps":0})
+    elif isinstance(sets, dict):
+        s = []
+        for k in sorted(sets.keys()):
+            v = sets[k]
+            s.append({"peso": int(v if isinstance(v,(int,float)) else v.get("peso",0)), "reps": int(v.get("reps",0) if isinstance(v,dict) else 0)})
+    else:
+        s = [{"peso":0,"reps":0} for _ in range(3)]
+    out["sets"] = s
+    out["timestamp"] = e.get("timestamp", datetime.now().isoformat())
+    return out
+
+workouts_raw = load_workouts(ath)
+workouts = [normalize(e) for e in workouts_raw]
+# save normalized
+save_workouts(ath, workouts)
+
+# -------------------------
+# Add exercise form (with icons)
+# -------------------------
+st.subheader("➕ Aggiungi esercizio")
+with st.expander("Aggiungi nuovo esercizio"):
+    colA, colB, colC = st.columns([2,3,1])
+    with colA:
+        group = st.selectbox("Gruppo muscolare", list(PRELOADED.keys()))
+        # show icon
+        icon_html = SVG_ICONS.get(group, "")
+        st.markdown(f"<div style='margin-top:6px'>{icon_html} <span class='small'>{group}</span></div>", unsafe_allow_html=True)
+    with colB:
+        exercise_choice = st.selectbox("Scegli esercizio", PRELOADED[group] + ["➕ Personalizzato"])
+        if exercise_choice == "➕ Personalizzato":
+            exercise = st.text_input("Nome esercizio personalizzato").strip()
+        else:
+            exercise = exercise_choice
+    with colC:
+        day = st.selectbox("Giorno", ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"])
+    if exercise:
+        sets_n = st.number_input("Numero serie", min_value=1, max_value=12, value=3)
+        st.markdown("**Pesi per serie (opzionale)**")
+        sw_cols = st.columns(min(4, sets_n))
+        new_sets = []
+        for i in range(sets_n):
+            c = sw_cols[i % len(sw_cols)]
+            w = c.number_input(f"S{i+1} kg", min_value=0, max_value=500, value=0, key=f"new_w_{i}")
+            r = c.number_input(f"S{i+1} rep", min_value=0, max_value=200, value=0, key=f"new_r_{i}")
+            new_sets.append({"peso": int(w), "reps": int(r)})
+        if st.button("Aggiungi esercizio alla routine"):
+            new_entry = {
+                "id": str(uuid.uuid4()),
+                "group": group,
+                "exercise": exercise,
+                "day": day,
+                "sets": new_sets if any(s["peso"]>0 or s["reps"]>0 for s in new_sets) else [{"peso":0,"reps":0} for _ in range(sets_n)],
+                "timestamp": datetime.now().isoformat()
+            }
+            workouts.append(new_entry)
+            save_workouts(ath, workouts)
+            st.success("Esercizio aggiunto!")
+            st.rerun()
+
+st.markdown("---")
+
+# -------------------------
+# Filters & display list
+# -------------------------
+st.subheader("📋 Routine & modifica per-set")
+f1, f2 = st.columns([2,3])
+with f1:
+    filter_day = st.selectbox("Filtra giorno", ["Tutti","Lun","Mar","Mer","Gio","Ven","Sab","Dom"])
+with f2:
+    all_exs = sorted({w["exercise"] for w in workouts})
+    filter_ex = st.selectbox("Filtra esercizio", ["Tutti"] + all_exs)
+
+filtered = []
+for w in workouts:
+    if filter_day != "Tutti" and w["day"] != filter_day:
+        continue
+    if filter_ex != "Tutti" and w["exercise"] != filter_ex:
+        continue
+    filtered.append(w)
+
+if not filtered:
+    st.info("Nessun esercizio con questi filtri — aggiungine uno.")
 else:
-    for i, row in enumerate(data):
-        with st.container():
-            col1, col2, col3, col4, col5, col6 = st.columns([2,2,1,1,1,1])
+    for entry in filtered:
+        st.markdown(f"<div class='exercise-card'><b style='font-size:15px'>{entry['exercise']}</b> <span class='small'> — {entry['group']} ({entry['day']})</span>", unsafe_allow_html=True)
+        # per-set editing
+        sets = entry["sets"]
+        cols = st.columns([1,1,1,1,1])
+        for i, s in enumerate(sets):
+            colp, colr, colb = st.columns([2,1,1])
+            p = colp.number_input(f"Peso S{i+1} — {entry['exercise']}", min_value=0, max_value=1000, value=int(s.get("peso",0)), key=f"{entry['id']}_peso_{i}")
+            r = colr.number_input(f"Rep S{i+1}", min_value=0, max_value=200, value=int(s.get("reps",0)), key=f"{entry['id']}_rep_{i}")
+            # update local list
+            real_idx = next((ix for ix,w in enumerate(workouts) if w["id"]==entry["id"]), None)
+            if real_idx is not None:
+                workouts[real_idx]["sets"][i]["peso"] = int(p)
+                workouts[real_idx]["sets"][i]["reps"] = int(r)
+        # entry controls
+        b1, b2 = st.columns([1,1])
+        if b1.button("💾 Salva entry", key=f"save_{entry['id']}"):
+            save_workouts(ath, workouts)
+            st.success("Salvato")
+        if b2.button("🗑️ Elimina entry", key=f"del_{entry['id']}"):
+            workouts = [w for w in workouts if w["id"] != entry["id"]]
+            save_workouts(ath, workouts)
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            col1.write(f"**{row['group']}**")
-            col2.write(row["exercise"])
-            new_peso = col3.slider("Kg", 0, 200, row["peso"], key=f"peso{i}")
-            new_reps = col4.number_input("Reps", 1, 50, row["reps"], key=f"reps{i}")
-            new_series = col5.number_input("Serie", 1, 10, row["series"], key=f"series{i}")
+st.markdown("---")
 
-            if col6.button("❌", key=f"del{i}"):
-                data.pop(i)
-                save_user_data(user, data)
-                st.rerun()
+# -------------------------
+# Register session to history (log)
+# -------------------------
+st.subheader("📥 Registra sessione")
+note = st.text_input("Nota sessione (opzionale)")
+if st.button("Registra sessione nello storico"):
+    hist = load_history(ath)
+    now = datetime.now().isoformat()
+    for w in workouts:
+        for s in w["sets"]:
+            hist.append({
+                "date": now,
+                "exercise": w["exercise"],
+                "group": w["group"],
+                "day": w["day"],
+                "peso": s.get("peso", 0),
+                "reps": s.get("reps", 0),
+                "note": note
+            })
+    save_history(ath, hist)
+    st.success("Sessione registrata nello storico")
 
-            # Salva modifiche
-            row["peso"] = new_peso
-            row["reps"] = new_reps
-            row["series"] = new_series
+st.markdown("---")
 
-    save_user_data(user, data)
+# -------------------------
+# Charts: progression & weekly volume
+# -------------------------
+st.subheader("📈 Analytics")
+
+hist = load_history(ath)
+if not hist:
+    st.info("Nessuno storico: registra una sessione per popolare i grafici.")
+else:
+    dfh = pd.DataFrame(hist)
+    # progression per exercise
+    ex_list = sorted(dfh["exercise"].unique())
+    sel_ex = st.selectbox("Scegli esercizio per progressione", ex_list)
+    df_sel = dfh[dfh["exercise"]==sel_ex].copy()
+    df_sel["date_dt"] = pd.to_datetime(df_sel["date"])
+    df_plot = df_sel.groupby("date_dt", as_index=False).agg({"peso":"mean", "reps":"sum"})
+    fig = px.line(df_plot, x="date_dt", y="peso", markers=True, title=f"Progressione peso — {sel_ex}")
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # weekly volume: sum(weight * reps) per week
+    dfh["date_dt"] = pd.to_datetime(dfh["date"])
+    dfh["year_week"] = dfh["date_dt"].dt.strftime("%Y-%U")
+    dfh["volume"] = dfh["peso"] * dfh["reps"]
+    vol = dfh.groupby("year_week", as_index=False).agg({"volume":"sum"})
+    vol = vol.sort_values("year_week")
+    if not vol.empty:
+        fig2 = px.bar(vol.tail(12), x="year_week", y="volume", title="Volume settimanale (ultime 12 settimane)")
+        fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+        st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown("---")
+st.caption("Workout Tracker PRO — Dark Purple Gradient — features: per-set editing, progression chart, weekly volume. Data saved locally in /data/*.json")
