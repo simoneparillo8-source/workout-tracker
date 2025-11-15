@@ -142,7 +142,8 @@ with col_add:
             user_data.append(row)
             save_user_data(selected_user, user_data)
             st.success("Esercizio aggiunto")
-            st.experimental_rerun()
+            st.rerun()
+
 
 # Delete option
 with col_del:
