@@ -1,4 +1,4 @@
-# app.py — Workout Tracker PRO (Dark Purple Gradient) — full features
+# app.py — Workout Tracker PRO (Dark Purple Gradient) — final
 import streamlit as st
 import json
 import os
@@ -8,6 +8,7 @@ from collections import defaultdict
 import pandas as pd
 import plotly.express as px
 from typing import List, Dict, Any
+import time
 import html
 
 # -------------------------
@@ -49,6 +50,7 @@ st.markdown(
       transition: transform .18s ease, box-shadow .18s ease;
       border: 3px solid rgba(255,255,255,0.06);
       box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      margin-bottom:6px;
     }
     .avatar:hover { transform:scale(1.05); }
     .avatar-selected { box-shadow: 0 10px 28px rgba(155,77,255,0.28); border-color: rgba(155,77,255,0.9); transform:scale(1.06); }
@@ -77,7 +79,7 @@ st.markdown(
 
     /* animated motivational area */
     .motiv-container { padding:8px 12px; border-radius:999px; display:inline-block; }
-    .motiv-text { font-weight:700; color:#fff; }
+    .motiv-text { font-weight:700; color:#fff; font-size:16px; }
 
     /* responsive minor fixes */
     @media (max-width: 600px) {
@@ -116,7 +118,6 @@ def ensure_files(a: str):
         if not os.path.exists(p):
             with open(p, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
-    # plan file optional (txt)
     if not os.path.exists(athlete_plan_file(a)):
         with open(athlete_plan_file(a), "w", encoding="utf-8") as f:
             f.write("")
@@ -188,59 +189,37 @@ if "athlete" not in st.session_state:
     st.session_state.athlete = ATHLETES[0]
 if "motiv_index" not in st.session_state:
     st.session_state.motiv_index = 0
+if "last_motiv_time" not in st.session_state:
+    st.session_state.last_motiv_time = time.time()
 if "show_plan_editor" not in st.session_state:
     st.session_state.show_plan_editor = False
 
 # -------------------------
-# Motivational carousel HTML (runs JS inside an iframe)
+# Motivational quotes rotation (session-based)
 # -------------------------
 MOTIVATIONS = [
     "Spingi oggi, vinci domani.",
     "Ogni rep ti avvicina al tuo obiettivo.",
     "Fai ciò che altri non vogliono fare.",
     "Tu costruisci la tua disciplina.",
-    "Non fermarti quando sei stanco, fermati quando hai finito."
+    "Non fermarti quando sei stanco, fermati quando hai finito.",
+    "Un giorno o il giorno 1. Decidi tu."
 ]
+MOTIV_INTERVAL = 6  # seconds
 
-def motivational_carousel_html(phrases: List[str], interval_ms: int = 5000):
-    # safe-escape phrases
-    esc = [html.escape(p) for p in phrases]
-    phrases_js = ",".join(f'"{p}"' for p in esc)
-    html_code = f"""
-    <div id='motiv' class='motiv-container card' style='display:inline-block;'>
-      <span id='motiv-text' class='motiv-text'></span>
-    </div>
-    <script>
-    const phrases = [{phrases_js}];
-    const interval = {interval_ms};
-    let idx = 0;
-    function showPhrase(i) {{
-      const el = parent.document.getElementById('motiv-text');
-      if(!el) return;
-      el.innerText = phrases[i % phrases.length];
-    }}
-    // initial
-    try {{
-      parent.document.getElementById('motiv-text').innerText = phrases[0];
-    }} catch(e) {{}}
-    // attempt to update via setInterval within this iframe by posting to parent
-    setInterval(function() {{
-      idx = (idx + 1) % phrases.length;
-      // try update in parent DOM (works in many Streamlit setups)
-      try {{
-        parent.document.getElementById('motiv-text').innerText = phrases[idx];
-      }} catch(e) {{}}
-    }}, interval);
-    </script>
-    """
-    return html_code
+# update index if enough time passed
+now_t = time.time()
+if now_t - st.session_state.last_motiv_time > MOTIV_INTERVAL:
+    st.session_state.motiv_index = (st.session_state.motiv_index + 1) % len(MOTIVATIONS)
+    st.session_state.last_motiv_time = now_t
+    # rerun to update UI
+    st.rerun()
 
-# attempt to inject motivational area (works best via st.components.v1.html)
-from streamlit.components.v1 import html as st_html
-st_html(motivational_carousel_html(MOTIVATIONS, interval_ms=6000), height=60)
+# show motivational pill
+st.markdown(f"<div class='motiv-container card'><span id='motiv-text' class='motiv-text'>{MOTIVATIONS[st.session_state.motiv_index]}</span></div>", unsafe_allow_html=True)
 
 # -------------------------
-# Athlete selector (avatars) in main area
+# Athlete selector (avatars) in main area and sidebar
 # -------------------------
 st.write("## 👤 Atleti")
 c1, c2 = st.columns(2)
@@ -276,6 +255,7 @@ with col3:
     if st.button("🧹 Reset locale"):
         save_workouts(ath, [])
         save_history(ath, [])
+        save_plan(ath, "")
         st.success("Dati locali resettati.")
         st.rerun()
 
@@ -304,7 +284,10 @@ def normalize(e: Dict[str,Any]) -> Dict[str,Any]:
         s = []
         for k in sorted(sets.keys()):
             v = sets[k]
-            s.append({"peso": int(v if isinstance(v,(int,float)) else v.get("peso",0)), "reps": int(v.get("reps",0) if isinstance(v,dict) else 0)})
+            if isinstance(v, dict):
+                s.append({"peso": int(v.get("peso",0)), "reps": int(v.get("reps",0))})
+            else:
+                s.append({"peso": int(v if isinstance(v,(int,float)) else 0), "reps": 0})
     else:
         s = [{"peso":0,"reps":0} for _ in range(3)]
     out["sets"] = s
@@ -384,13 +367,11 @@ else:
     for entry in filtered:
         st.markdown(f"<div class='exercise-card'><b style='font-size:15px'>{entry['exercise']}</b> <span class='small'> — {entry['group']} ({entry['day']})</span>", unsafe_allow_html=True)
         sets = entry["sets"]
-        # per-set editing controls (number inputs)
         for i, s in enumerate(sets):
             cols = st.columns([2,1,1,1])
             cols[0].markdown(f"**Serie {i+1}**")
             p = cols[1].number_input(f"peso_{entry['id']}_{i}", min_value=0, max_value=1000, value=int(s.get("peso",0)), key=f"peso_{entry['id']}_{i}")
             r = cols[2].number_input(f"rep_{entry['id']}_{i}", min_value=0, max_value=200, value=int(s.get("reps",0)), key=f"rep_{entry['id']}_{i}")
-            # update in workouts by id
             idx = next((ix for ix,w in enumerate(workouts) if w["id"]==entry["id"]), None)
             if idx is not None:
                 workouts[idx]["sets"][i]["peso"] = int(p)
@@ -416,7 +397,7 @@ if st.button("🔽 Mostra / Nascondi scheda"):
 
 if st.session_state.get("show_plan_editor", False):
     plan_text = load_plan(ath)
-    txt = st.text_area("Modifica la tua scheda (Markdown / testo). Salva quando hai finito.", value=plan_text, height=220)
+    txt = st.text_area("Modifica la tua scheda (Markdown / testo). Salva quando hai finito.", value=plan_text, height=280)
     colp, colq = st.columns([1,1])
     with colp:
         if st.button("💾 Salva scheda"):
@@ -432,7 +413,7 @@ st.markdown("---")
 # Register session to history (log) + note sessione
 # -------------------------
 st.subheader("📥 Registra sessione")
-st.write("Aggiungi una nota (es. sensazioni, RPE, durata). Verrà salvata insieme ai record di ogni serie.")
+st.write("Aggiungi una nota (es. sensazioni, RPE, durata). Verrà salvata con ogni record di ogni serie.")
 note = st.text_input("Nota sessione (opzionale)", value="")
 if st.button("Registra sessione nello storico"):
     hist = load_history(ath)
@@ -485,4 +466,4 @@ else:
         st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
-st.caption("Workout Tracker PRO — Dark Purple Gradient — features: per-set editing, progression chart, weekly volume. Data saved locally in /data/*.json")
+st.caption("Workout Tracker PRO — Dark Purple Gradient — features: per-set editing, progression chart, weekly volume. Data saved locally in /data/*.json and plans in /data/*.txt")
