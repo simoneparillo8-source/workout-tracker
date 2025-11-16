@@ -89,34 +89,27 @@ MOTIVS = [
     "Non mollare ora.",
     "Ogni rep ti avvicina al tuo obiettivo.",
     "Il dolore è temporaneo, il risultato è per sempre.",
-    "Diventa la versione più forte di te stesso.",
-    "Disciplina > Motivazione.",
-    "Un giorno o il giorno 1 — scegli oggi."
-]
-# small JS widget using components_html
+   # Motivational ticker — JS inserito correttamente in una stringa multilinea
 from streamlit.components.v1 import html as components_html
 motivs_json = json.dumps(MOTIVS)
-ticker_html = f"""
-<div id="motiv" style="display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(155,77,255,0.08);font-weight:700;color:#fff;">
-Caricamento...
-</div>
+
+ticker_html = f"""<div id="motiv" class="motiv">Caricamento...</div>
 <script>
 const motivs = {motivs_json};
 let idx = 0;
-function showMotiv(){ const el = document.getElementById('motiv'); if(!el) return; el.innerText = motivs[idx % motivs.length]; idx++; }
+function showMotiv() {{
+  const el = document.getElementById('motiv');
+  if (!el) return;
+  el.innerText = motivs[idx % motivs.length];
+  idx++;
+}}
 showMotiv();
 setInterval(showMotiv, 30000);
 </script>
 """
-components_html(ticker_html, height=48)
 
-st.markdown("---")
+components_html(ticker_html, height=50)
 
-# -----------------------
-# Sidebar: athlete selector + quick actions
-# -----------------------
-st.sidebar.title("Controlli")
-st.sidebar.markdown("**Atleta** (fisso lista nel codice)")
 selected_athlete = st.sidebar.radio("Scegli atleta", ATHLETES, index=0, key="sidebar_athlete")
 ath = selected_athlete
 ensure_athlete_file(ath)
