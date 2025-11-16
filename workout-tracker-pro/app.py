@@ -190,6 +190,15 @@ st_html(js, height=64)
 # -----------------------
 # Athlete picker main area (animated avatars)
 # -----------------------
+# ------------ gestione aggiunta atleti -------------
+st.write("### ➕ Aggiungi nuovo atleta")
+
+new_name = st.text_input("Nome nuovo atleta")
+if st.button("Aggiungi atleta"):
+    if new_name and new_name not in ATHLETES:
+        ATHLETES.append(new_name)
+        st.success(f"Atleta {new_name} aggiunto!")
+
 st.write("## 👤 Scegli atleta")
 cols = st.columns(len(ATHLETES))
 for i,a in enumerate(ATHLETES):
