@@ -163,7 +163,29 @@ MOTIVS = [
   "Un giorno o il giorno 1 — scegli oggi."
 ]
 # JS inside component rotates the text locally every 30s; no rerun needed.
-js = """
+# Inject animation for motivational phrases (SAFE VERSION)
+import json
+
+motivs_json = json.dumps(MOTIVS)
+
+js = f"""
+<script>
+const motivs = {motivs_json};
+let idx = 0;
+function rotateMotiv() {{
+    const el = window.parent.document.querySelector('#motiv-box');
+    if (el) {{
+        el.innerText = motivs[idx];
+        idx = (idx + 1) % motivs.length;
+    }}
+}}
+setInterval(rotateMotiv, 30000);
+</script>
+"""
+
+st.markdown("<div id='motiv-box' style='font-size:22px; padding:12px; color:#00eaff; font-weight:600;'>Caricamento...</div>", unsafe_allow_html=True)
+st.markdown(js, unsafe_allow_html=True)
+
 <div style="display:flex;align-items:center;gap:10px">
   <div id="motiv" class="motiv-container"><span id="motiv-text" class="motiv-text"></span></div>
 </div>
